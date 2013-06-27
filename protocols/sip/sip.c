@@ -1,33 +1,29 @@
-/*----------------------------------------------------------------------------
- Copyright:      Johann Gail  mailto: johann.gail.gmx.de
- Author:         Johann Gail
- Remarks:        
- known Problems: none
- Version:        05.06.2013
- Description:    SIP Client for VOIP calls
-
- Modifications to fit Ethersex firmware:
- Copyright (C) 2013 by Johann Gail
- 
- Dieses Programm ist freie Software. Sie k�nnen es unter den Bedingungen der 
- GNU General Public License, wie von der Free Software Foundation ver�ffentlicht,
- weitergeben und/oder modifizieren, entweder gem�� Version 2 der Lizenz oder 
- (nach Ihrer Option) jeder sp�teren Version. 
-
- Die Ver�ffentlichung dieses Programms erfolgt in der Hoffnung, 
- da� es Ihnen von Nutzen sein wird, aber OHNE IRGENDEINE GARANTIE, 
- sogar ohne die implizite Garantie der MARKTREIFE oder der VERWENDBARKEIT 
- F�R EINEN BESTIMMTEN ZWECK. Details finden Sie in der GNU General Public License.
-
- Sie sollten eine Kopie der GNU General Public License zusammen mit diesem 
- Programm erhalten haben. 
- Falls nicht, schreiben Sie an die Free Software Foundation, 
- Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA. 
-------------------------------------------------------------------------------*/
+/*
+ * Copyright (c) 2009 by Johann Gail <johann.gail.gmx.de>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 3
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
+ * For more information on the GPL, please go to:
+ * http://www.gnu.org/copyleft/gpl.html
+ */
 
 
-// SIP Protocoll see at RFC 3261
-// http://www.ietf.org/rfc/rfc3261.txt
+/* This is a rather basic implementation of the SIP protocoll.
+ * For more details of SIP protocoll see at RFC 3261
+ * http://www.ietf.org/rfc/rfc3261.txt
+ */
 
 #include "config.h"
 
@@ -142,6 +138,75 @@ md5(void* block, uint16_t length)
   md5_lastBlock(&ctx_state, block, length);
 }
 */
+
+char*
+sip_insert_md5_auth(char *d) {
+  // Form "username:realm:password"
+  char buffer[99]; //32 + : + 32 + : + 32 + \0
+  char* p = buffer;
+  strcpy(p, CONF_SIP_AUTH_USER);
+  p+=strlen(CONF_SIP_AUTH_USER);
+  *p++ = ':';
+  strcpy(p, realm);
+  p+=strlen(realm);
+  *p++ = ':';
+  strcpy(p, CONF_SIP_AUTH_PASS);
+  p+=strlen(CONF_SIP_AUTH_PASS);
+  *p = 0;
+
+  SIP_DEBUG("input h1: %s\r\n", buffer);
+  md5_ctx_t h1;
+  md5_init(&h1);
+  md5_lastBlock(&h1, buffer, (p-buffer)*8);
+
+
+  // Form "method:digesturi"
+  p = buffer;
+  strcpy(p, "INVITE");
+  p+=strlen("INVITE");
+  *p++ = ':';
+  strcpy(p, "sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP);
+  p+=strlen("sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP);
+  *p = 0;
+
+  SIP_DEBUG("input h2: %s\r\n", buffer);
+  md5_ctx_t h2;
+  md5_init(&h2);
+  md5_lastBlock(&h2, buffer, (p-buffer)*8);
+
+  // Response h1:nonce:h2
+  p = buffer;
+  MD5ToHex(&h1, p);
+  p += 32;
+  *p++ = ':';
+  strcpy(p, nonce);
+  p+=strlen(nonce);
+  *p++ = ':';
+  MD5ToHex(&h2, p);
+  p += 32;
+  *p = 0;
+
+  SIP_DEBUG("input response: %s\r\n", buffer);
+  md5_ctx_t response;
+  md5_init(&response);
+  md5_lastBlock(&response, buffer, (p-buffer)*8);
+
+  MD5ToHex(&response, buffer);
+  buffer[32]=0;
+  SIP_DEBUG("response: %s\r\n", buffer);
+
+  my_strcat_P(d, SIP_REALM);
+  strcpy(d, realm);
+  d+=strlen(realm);
+  my_strcat_P(d, SIP_NONCE);
+  strcpy(d, nonce);
+  d+=strlen(nonce);
+  my_strcat_P(d, SIP_RESPONSE);
+  strcpy(d, buffer);
+  d+=strlen(buffer);
+  my_strcat_P(d, SIP_ALGO);
+  return d;
+}
 
 char* 
 sip_append_cseg_number(char* p) {
@@ -363,76 +428,12 @@ sip_main()
       }
       else if (state == SIPS_INVITE_AUTH) 
       {  
-        // Form "username:realm:password"
-        char buffer[99]; //32 + : + 32 + : + 32 + \0
-        char* p = buffer;
-        strcpy(p, CONF_SIP_AUTH_USER);
-        p+=strlen(CONF_SIP_AUTH_USER);
-        *p++ = ':';
-        strcpy(p, realm);
-        p+=strlen(realm);
-        *p++ = ':';
-        strcpy(p, CONF_SIP_AUTH_PASS);
-        p+=strlen(CONF_SIP_AUTH_PASS);
-        *p = 0;
-        
-        SIP_DEBUG("input h1: %s\r\n", buffer);
-        md5_ctx_t h1;
-        md5_init(&h1);
-        md5_lastBlock(&h1, buffer, (p-buffer)*8);
-  
-  
-        // Form "method:digesturi"
-        p = buffer;
-        strcpy(p, "INVITE");
-        p+=strlen("INVITE");
-        *p++ = ':';
-        strcpy(p, "sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP);
-        p+=strlen("sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP);
-        *p = 0;
-  
-        SIP_DEBUG("input h2: %s\r\n", buffer);
-        md5_ctx_t h2;
-        md5_init(&h2);
-        md5_lastBlock(&h2, buffer, (p-buffer)*8);
-  
-        // Response h1:nonce:h2
-        p = buffer;
-        MD5ToHex(&h1, p);
-        p += 32;
-        *p++ = ':';
-        strcpy(p, nonce);
-        p+=strlen(nonce);
-        *p++ = ':';
-        MD5ToHex(&h2, p);
-        p += 32;
-        *p = 0;
-        
-        SIP_DEBUG("input response: %s\r\n", buffer);
-        md5_ctx_t response;
-        md5_init(&response);
-        md5_lastBlock(&response, buffer, (p-buffer)*8);
-  
-        MD5ToHex(&response, buffer);
-        buffer[32]=0;
-        SIP_DEBUG("response: %s\r\n", buffer);
-  
-  
-        p = uip_appdata;
+        char *p = uip_appdata;
         my_strcat_P(p, SIP_INVITE);
         my_strcat_P(p, SIP_HEADER);
         p = sip_append_cseg_number(p);
         my_strcat_P(p, SIP_HEADER2);
-        my_strcat_P(p, SIP_REALM);
-        strcpy(p, realm);
-        p+=strlen(realm);
-        my_strcat_P(p, SIP_NONCE);
-        strcpy(p, nonce);
-        p+=strlen(nonce);
-        my_strcat_P(p, SIP_RESPONSE);
-        strcpy(p, buffer);
-        p+=strlen(buffer);
-        my_strcat_P(p, SIP_ALGO);
+        p = sip_insert_md5_auth(p);
         my_strcat_P(p, SIP_CSEG);
         p = sip_append_cseg_number(p);
         my_strcat_P(p, SIP_INVITE);
