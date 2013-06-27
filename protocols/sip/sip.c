@@ -495,6 +495,7 @@ sip_main()
         my_strcat_P(p, SIP_HEADER);
         p = sip_append_cseg_number(p);
         my_strcat_P(p, SIP_HEADER2);
+        p = sip_insert_md5_auth(p);
         my_strcat_P(p, SIP_EXPIRES);
         my_strcat_P(p, SIP_CSEG);
         p = sip_append_cseg_number(p);
@@ -504,7 +505,7 @@ sip_main()
         uip_udp_send(p - (char *)uip_appdata);
         SIP_DEBUG_STOP(p, "SIP sent %d bytes:\r\n%s\r\n", p - (char *)uip_appdata, (char *)uip_appdata );
       }
-#ifdef CONF_SIP_REGISTER
+#endif
     }
   }
 }
