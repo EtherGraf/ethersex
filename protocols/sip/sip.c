@@ -65,6 +65,8 @@
 #define SIPS_CANCELING 4
 #define SIPS_SPEAKING 5
 #define SIPS_BYE 6
+#define SIPS_REGISTER 7
+#define SIPS_REGISTER_AUTH 8
 
 uip_udp_conn_t *udp_sip_conn = NULL;
 uint8_t state = SIPS_IDLE;
@@ -95,6 +97,7 @@ const char PROGMEM SIP_REALM[]  = ", realm=\"";
 const char PROGMEM SIP_NONCE[]  = "\", nonce=\"";
 const char PROGMEM SIP_RESPONSE[]  = "\", uri=\"sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP"\", response=\"";
 const char PROGMEM SIP_ALGO[]    = "\", algorithm=MD5";
+const char PROGMEM SIP_EXPIRES[] = "\r\nExpires: 300";
 const char PROGMEM SIP_CSEG[]    = "\r\nCSeq:";
 const char PROGMEM SIP_HEADEREND[] =  "\r\n\r\n";
 /*const char PROGMEM SIP_CONTENT[] =  "\r\nUser-Agent: Ethersex/2013/Doorbell\r\n"
@@ -241,6 +244,11 @@ sip_main()
         }
         sip_send_ACK(uip_appdata);
         cseg_counter++;
+#if CONF_SIP_REGISTER
+        if (state == SIPS_REGISTER)
+          state = SIPS_REGISTER_AUTH;
+        else
+#endif
         state = SIPS_INVITE_AUTH;
         
         break;
@@ -333,7 +341,7 @@ sip_main()
       if (pollcounter == 0) {
 	      cseg_counter++;
 	      state = SIPS_IDLE;
-			}
+      }
     }        
     //Every 1 sec repeat last UDP-Telegramm, may be lost. 
     if (pollcounter % 10 == 0) {
@@ -458,13 +466,45 @@ sip_main()
         my_strcat_P(p, SIP_CSEG);
         p = sip_append_cseg_number(p);
         my_strcat_P(p, SIP_BYE);
-				//include basic auth
         my_strcat_P(p, SIP_HEADEREND);
     
         uip_udp_send(p - (char *)uip_appdata);
         SIP_DEBUG_STOP(p, "SIP sent %d bytes:\r\n%s\r\n", p - (char *)uip_appdata, (char *)uip_appdata );
       }
+#ifdef CONF_SIP_REGISTER
+      else if (state == SIPS_REGISTER) {
+        char *p = uip_appdata;
 
+        my_strcat_P(p, SIP_REGISTER);
+        my_strcat_P(p, SIP_HEADER);
+        p = sip_append_cseg_number(p);
+        my_strcat_P(p, SIP_HEADER2);
+        my_strcat_P(p, SIP_EXPIRES);
+        my_strcat_P(p, SIP_CSEG);
+        p = sip_append_cseg_number(p);
+        my_strcat_P(p, SIP_REGISTER);
+        my_strcat_P(p, SIP_HEADEREND);
+
+        uip_udp_send(p - (char *)uip_appdata);
+        SIP_DEBUG_STOP(p, "SIP sent %d bytes:\r\n%s\r\n", p - (char *)uip_appdata, (char *)uip_appdata );
+      }
+      else if (state == SIPS_REGISTER_AUTH) {
+        char *p = uip_appdata;
+
+        my_strcat_P(p, SIP_REGISTER);
+        my_strcat_P(p, SIP_HEADER);
+        p = sip_append_cseg_number(p);
+        my_strcat_P(p, SIP_HEADER2);
+        my_strcat_P(p, SIP_EXPIRES);
+        my_strcat_P(p, SIP_CSEG);
+        p = sip_append_cseg_number(p);
+        my_strcat_P(p, SIP_REGISTER);
+        my_strcat_P(p, SIP_HEADEREND);
+
+        uip_udp_send(p - (char *)uip_appdata);
+        SIP_DEBUG_STOP(p, "SIP sent %d bytes:\r\n%s\r\n", p - (char *)uip_appdata, (char *)uip_appdata );
+      }
+#ifdef CONF_SIP_REGISTER
     }
   }
 }
