@@ -65,7 +65,7 @@
 #define SIPS_REGISTER_AUTH 8
 
 uip_udp_conn_t *udp_sip_conn = NULL;
-uint8_t state = SIPS_IDLE;
+uint8_t state = SIPS_REGISTER; //IDLE;
 uint8_t pollcounter = 0;
 uint8_t cseg_counter = 0;
 
@@ -81,6 +81,19 @@ const char PROGMEM SIP_INVITE[] = "INVITE";
 const char PROGMEM SIP_BYE[]    = "BYE"; 
 const char PROGMEM SIP_REGISTER[]="REGISTER"; 
 
+const char PROGMEM SIP_HEADER_URI[] = "sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP;
+const char PROGMEM SIP_HEADER_URI_REG[] = "sip:"CONF_SIP_PROXY_IP;
+
+const char PROGMEM SIP_HEADER_REGI[] = " sip:"CONF_SIP_PROXY_IP " SIP/2.0\r\n"
+                                  "Via: SIP/2.0/UDP "CONF_ENC_IP":" STR(SIP_PORT) ";rport;branch=z9hG4bK1234." ;
+const char PROGMEM SIP_HEADER_REGI2[] = "\r\nFrom: \"Doorbell\" <sip:"CONF_SIP_AUTH_USER"@"CONF_SIP_PROXY_IP">;tag=pfhdc\r\n"
+                                  "To: <sip:"CONF_SIP_AUTH_USER"@"CONF_SIP_PROXY_IP">\r\n"
+                                  "Max-Forwards: 70\r\n"
+                                  "Call-ID: hkmhwqdsqvsmnqd@"CONF_HOSTNAME"\r\n"
+                                  "Contact: <sip:"CONF_SIP_FROM"@"CONF_ENC_IP">\r\n"
+                                  "Authorization: Digest username=\""CONF_SIP_AUTH_USER"\"";
+
+
 const char PROGMEM SIP_HEADER[] = " sip:"CONF_SIP_TO"@" CONF_SIP_PROXY_IP " SIP/2.0\r\n"
                                   "Via: SIP/2.0/UDP "CONF_ENC_IP":" STR(SIP_PORT) ";rport;branch=z9hG4bK1234." ;
 const char PROGMEM SIP_HEADER2[]= "\r\nFrom: \"Doorbell\" <sip:"CONF_SIP_AUTH_USER"@"CONF_SIP_PROXY_IP">;tag=pfhdc\r\n"
@@ -91,7 +104,8 @@ const char PROGMEM SIP_HEADER2[]= "\r\nFrom: \"Doorbell\" <sip:"CONF_SIP_AUTH_US
                                   "Authorization: Digest username=\""CONF_SIP_AUTH_USER"\"";
 const char PROGMEM SIP_REALM[]  = ", realm=\"";
 const char PROGMEM SIP_NONCE[]  = "\", nonce=\"";
-const char PROGMEM SIP_RESPONSE[]  = "\", uri=\"sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP"\", response=\"";
+const char PROGMEM SIP_URI[]    = "\", uri=\"";
+const char PROGMEM SIP_RESPONSE[]  = "\", response=\"";
 const char PROGMEM SIP_ALGO[]    = "\", algorithm=MD5";
 const char PROGMEM SIP_EXPIRES[] = "\r\nExpires: 300";
 const char PROGMEM SIP_CSEG[]    = "\r\nCSeq:";
@@ -140,7 +154,7 @@ md5(void* block, uint16_t length)
 */
 
 char*
-sip_insert_md5_auth(char *d) {
+sip_insert_md5_auth(char *d, PGM_P method, PGM_P uri) {
   // Form "username:realm:password"
   char buffer[99]; //32 + : + 32 + : + 32 + \0
   char* p = buffer;
@@ -162,11 +176,11 @@ sip_insert_md5_auth(char *d) {
 
   // Form "method:digesturi"
   p = buffer;
-  strcpy(p, "INVITE");
-  p+=strlen("INVITE");
+  strcpy_P(p, method);
+  p+=strlen_P(method);
   *p++ = ':';
-  strcpy(p, "sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP);
-  p+=strlen("sip:"CONF_SIP_TO"@"CONF_SIP_PROXY_IP);
+  strcpy_P(p, uri);
+  p+=strlen_P(uri);
   *p = 0;
 
   SIP_DEBUG("input h2: %s\r\n", buffer);
@@ -201,6 +215,9 @@ sip_insert_md5_auth(char *d) {
   my_strcat_P(d, SIP_NONCE);
   strcpy(d, nonce);
   d+=strlen(nonce);
+  my_strcat_P(d, SIP_URI);
+  strcpy_P(d, uri);
+  d+=strlen_P(uri);
   my_strcat_P(d, SIP_RESPONSE);
   strcpy(d, buffer);
   d+=strlen(buffer);
@@ -271,7 +288,22 @@ sip_main()
       state = SIPS_IDLE;
       return;
     }
-    
+#if CONF_SIP_REGISTER
+    if ((((char*)uip_appdata)[0] == 'I') &&
+        (((char*)uip_appdata)[1] == 'N') &&
+        (((char*)uip_appdata)[2] == 'V') &&
+        (((char*)uip_appdata)[3] == 'I') &&
+        (((char*)uip_appdata)[4] == 'T') &&
+        (((char*)uip_appdata)[5] == 'E') ) {
+
+      SIP_DEBUG ("received SIP INVITE\n\r");
+      sip_send_status_200(uip_appdata);
+      cseg_counter++;
+      state = SIPS_SPEAKING;
+      return;
+    }
+#endif
+
     uint16_t code = atol ((char *) uip_appdata + 8);
     SIP_DEBUG ("received data, new code: %d\n", code);
 
@@ -307,14 +339,17 @@ sip_main()
           }
         *p2 = 0;
         }
-        sip_send_ACK(uip_appdata);
+        //sip_send_ACK(uip_appdata);
         cseg_counter++;
 #if CONF_SIP_REGISTER
         if (state == SIPS_REGISTER)
           state = SIPS_REGISTER_AUTH;
         else
 #endif
-        state = SIPS_INVITE_AUTH;
+        if (state == SIPS_INVITE)
+          state = SIPS_INVITE_AUTH;
+        else
+          state = SIPS_IDLE;
         
         break;
     
@@ -335,8 +370,8 @@ sip_main()
       
     // OK
     case 200:
-      sip_send_ACK(uip_appdata);
       if (state==SIPS_RINGING) {
+        sip_send_ACK(uip_appdata);
         state = SIPS_SPEAKING;
         cseg_counter++;
         // If the invited person takes the call, terminate it immediatelly.
@@ -433,7 +468,7 @@ sip_main()
         my_strcat_P(p, SIP_HEADER);
         p = sip_append_cseg_number(p);
         my_strcat_P(p, SIP_HEADER2);
-        p = sip_insert_md5_auth(p);
+        p = sip_insert_md5_auth(p, SIP_INVITE, SIP_HEADER_URI);
         my_strcat_P(p, SIP_CSEG);
         p = sip_append_cseg_number(p);
         my_strcat_P(p, SIP_INVITE);
@@ -493,10 +528,10 @@ sip_main()
         char *p = uip_appdata;
 
         my_strcat_P(p, SIP_REGISTER);
-        my_strcat_P(p, SIP_HEADER);
+        my_strcat_P(p, SIP_HEADER_REGI);
         p = sip_append_cseg_number(p);
-        my_strcat_P(p, SIP_HEADER2);
-        p = sip_insert_md5_auth(p);
+        my_strcat_P(p, SIP_HEADER_REGI2);
+        p = sip_insert_md5_auth(p, SIP_REGISTER, SIP_HEADER_URI_REG);
         my_strcat_P(p, SIP_EXPIRES);
         my_strcat_P(p, SIP_CSEG);
         p = sip_append_cseg_number(p);
